@@ -368,6 +368,14 @@ function runTime(token: string) {
             }
         }
 
+        Vencord.Webpack.waitFor(
+            "loginToken",
+            m => {
+                console.log("[PUP_DEBUG]", "Logging in with token...");
+                m.loginToken(token);
+            }
+        );
+
         Vencord.Webpack.beforeInitListeners.add(() => {
             console.log("[PUP_DEBUG]", "Loading all chunks...");
 
@@ -379,14 +387,6 @@ function runTime(token: string) {
                 loadLazyChunks(Vencord.Webpack.wreq.m[factoryId].toString());
             }
         });
-
-        Vencord.Webpack.waitFor(
-            "loginToken",
-            m => {
-                console.log("[PUP_DEBUG]", "Logging in with token...");
-                m.loginToken(token);
-            }
-        );
 
         // Force load all chunks
         Vencord.Webpack.onceReady.then(() => setTimeout(async () => {
