@@ -309,44 +309,27 @@ function runTime(token: string) {
             });
         });
 
-        Vencord.Webpack.waitFor(
-            "loginToken",
-            m => {
-                console.log("[PUP_DEBUG]", "Logging in with token...");
-                m.loginToken(token);
-            }
-        );
+        // Hacky way to attempt to see if chunks finished loading
+        let finishedLoadingTimeout: NodeJS.Timeout;
+        let finishedLoadingPromise: (value: void | PromiseLike<void>) => void;
+        const finishedLoading = new Promise<void>(r => finishedLoadingPromise = r);
 
-        // Force load all chunks
-        Vencord.Webpack.onceReady.then(() => setTimeout(async () => {
-            console.log("[PUP_DEBUG]", "Webpack is ready!");
+        const validChunks = new Set<string>();
+        const invalidChunks = new Set<string>();
 
-            const { wreq } = Vencord.Webpack;
+        async function loadLazyChunks(factoryCode: string) {
+            clearTimeout(finishedLoadingTimeout);
+            finishedLoadingTimeout = setTimeout(() => finishedLoadingPromise(), 15000);
 
-            console.log("[PUP_DEBUG]", "Loading all chunks...");
+            const { wreq, chunkGroups } = Vencord.Webpack;
 
-            let chunks = null as Record<number, string[]> | null;
-            const sym = Symbol("Vencord.chunksExtract");
-
-            Object.defineProperty(Object.prototype, sym, {
-                get() {
-                    chunks = this;
-                },
-                set() { },
-                configurable: true,
-            });
-
-            await (wreq as any).el(sym);
-            delete Object.prototype[sym];
-
+            const lazyChunks = factoryCode.matchAll(/\.el\("(.+?)"\)(?<=(\i)\.el.+?)\.then\(\2\.bind\(\2,"(.+?)"\)\)/g);
             const validChunksEntryPoints = new Set<string>();
-            const validChunks = new Set<string>();
-            const invalidChunks = new Set<string>();
 
-            if (!chunks) throw new Error("Failed to get chunks");
+            for (const [, chunkGroupId, , entryPoint] of lazyChunks) {
+                const chunkIds = chunkGroups[chunkGroupId];
+                if (chunkIds == null) continue;
 
-            for (const entryPoint in chunks) {
-                const chunkIds = chunks[entryPoint];
                 let invalidEntryPoint = false;
 
                 for (const id of chunkIds) {
@@ -376,14 +359,48 @@ function runTime(token: string) {
                 } catch (err) { }
             }
 
+            for (const entryPoint of validChunksEntryPoints) {
+                try {
+                    if (wreq.m[entryPoint]) wreq(entryPoint as any);
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+        }
+
+        Vencord.Webpack.beforeInitListeners.add(() => {
+            console.log("[PUP_DEBUG]", "Loading all chunks...");
+
+            Vencord.Webpack.factoryListeners.add(factory => {
+                loadLazyChunks(factory.toString());
+            });
+
+            for (const factoryId in Vencord.Webpack.wreq.m) {
+                loadLazyChunks(Vencord.Webpack.wreq.m[factoryId].toString());
+            }
+        });
+
+        Vencord.Webpack.waitFor(
+            "loginToken",
+            m => {
+                console.log("[PUP_DEBUG]", "Logging in with token...");
+                m.loginToken(token);
+            }
+        );
+
+        // Force load all chunks
+        Vencord.Webpack.onceReady.then(() => setTimeout(async () => {
+            console.log("[PUP_DEBUG]", "Webpack is ready!");
+
+            const { wreq } = Vencord.Webpack;
+
+            await finishedLoading;
+
             // Matches "id" or id:
             const chunkIdRegex = /(?:"(\d+?)")|(?:(\d+?):)/g;
-            const wreqU = wreq.u.toString();
-
             const allChunks = [] as string[];
-            let currentMatch: RegExpExecArray | null;
 
-            while ((currentMatch = chunkIdRegex.exec(wreqU)) != null) {
+            for (const currentMatch of wreq.u.toString().matchAll(chunkIdRegex)) {
                 const id = currentMatch[1] ?? currentMatch[2];
                 if (id == null) continue;
 
@@ -407,14 +424,6 @@ function runTime(token: string) {
             // Make sure every chunk has finished loading
             await new Promise(r => setTimeout(r, 1000));
 
-            for (const entryPoint of validChunksEntryPoints) {
-                try {
-                    if (wreq.m[entryPoint]) wreq(entryPoint as any);
-                } catch (err) {
-                    console.error(err);
-                }
-            }
-
             console.log("[PUP_DEBUG]", "Finished loading all chunks!");
 
             for (const patch of Vencord.Plugins.patches) {
@@ -428,10 +437,11 @@ function runTime(token: string) {
 
                 if (searchType === "findComponent") method = "find";
                 if (searchType === "findExportedComponent") method = "findByProps";
-                if (searchType === "waitFor" || searchType === "waitForComponent" || searchType === "waitForStore") {
+                if (searchType === "waitFor" || searchType === "waitForComponent") {
                     if (typeof args[0] === "string") method = "findByProps";
                     else method = "find";
                 }
+                if (searchType === "waitForStore") method = "findStore";
 
                 try {
                     let result: any;

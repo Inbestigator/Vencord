@@ -17,4 +17,5 @@
 */
 
 export * as Common from "./common";
+export { _beforeWebpackInit } from "./patchWebpack";
 export * from "./webpack";

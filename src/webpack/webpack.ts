@@ -35,6 +35,7 @@ export const onceReady = new Promise<void>(r => _resolveReady = r);
 
 export let wreq: WebpackInstance;
 export let cache: WebpackInstance["c"];
+export let chunkGroups: Record<number, string[]>;
 
 export type FilterFn = (mod: any) => boolean;
 
@@ -68,19 +69,19 @@ export const filters = {
 };
 
 export const subscriptions = new Map<FilterFn, CallbackFn>();
-export const listeners = new Set<CallbackFn>();
+export const moduleListeners = new Set<CallbackFn>();
+export const factoryListeners = new Set<(factory: (module, exports, require) => void) => void>();
+export const beforeInitListeners = new Set<() => void>();
 
 export type CallbackFn = (mod: any, id: string) => void;
 
-export function _initWebpack(instance: typeof window.webpackChunkdiscord_app) {
-    if (cache !== void 0) throw "no.";
+export function _initWebpack(webpackRequire: WebpackInstance) {
+    wreq = webpackRequire;
+    cache = webpackRequire.c;
+}
 
-    instance.push([[Symbol("Vencord")], {}, r => wreq = r]);
-    instance.pop();
-    if (!wreq) return false;
-
-    cache = wreq.c;
-    return true;
+export function _initChunkGroups(groups: Record<number, string[]>) {
+    chunkGroups = groups;
 }
 
 if (IS_DEV && IS_DISCORD_DESKTOP) {
@@ -96,7 +97,7 @@ function handleModuleNotFound(method: string, ...filter: unknown[]) {
     logger.error(err, "Filter:", filter);
 
     // Strict behaviour in DevBuilds to fail early and make sure the issue is found
-    if (IS_DEV && !devToolsOpen)
+    if (IS_DEV && IS_DISCORD_DESKTOP && !devToolsOpen)
         throw err;
 }
 
@@ -202,7 +203,7 @@ export const findBulk = traceFunction("findBulk", function findBulk(...filterFns
 
     if (found !== length) {
         const err = new Error(`Got ${length} filters, but only found ${found} modules!`);
-        if (IS_DEV) {
+        if (IS_DEV && IS_DISCORD_DESKTOP) {
             if (!devToolsOpen)
                 // Strict behaviour in DevBuilds to fail early and make sure the issue is found
                 throw err;
@@ -230,7 +231,7 @@ export const findModuleId = traceFunction("findModuleId", function findModuleId(
     }
 
     const err = new Error("Didn't find module with code(s):\n" + code.join("\n"));
-    if (IS_DEV) {
+    if (IS_DEV && IS_DISCORD_DESKTOP) {
         if (!devToolsOpen)
             // Strict behaviour in DevBuilds to fail early and make sure the issue is found
             throw err;
@@ -410,7 +411,7 @@ export function findExportedComponentLazy<T extends object = any>(...props: stri
  * @param code An array of all the code the module factory containing the entry point (as of using it to load chunks) must include
  * @param matcher A RegExp that returns the entry point id as the first capture group. Defaults to a matcher that captures the first entry point found in the module factory
  */
-export async function extractAndLoadChunks(code: string[], matcher: RegExp = /\.el\("(.+?)"\)(?<=(\i)\.el.+?)\.then\(\2\.bind\(\2,"\1"\)\)/) {
+export async function extractAndLoadChunks(code: string[], matcher: RegExp = /\.el\(".+?"\)(?<=(\i)\.el.+?)\.then\(\1\.bind\(\1,"(.+?)"\)\)/) {
     const module = findModuleFactory(...code);
     if (!module) {
         const err = new Error("extractAndLoadChunks: Couldn't find module factory");
@@ -425,7 +426,7 @@ export async function extractAndLoadChunks(code: string[], matcher: RegExp = /\.
         logger.warn(err, "Code:", code, "Matcher:", matcher);
 
         // Strict behaviour in DevBuilds to fail early and make sure the issue is found
-        if (IS_DEV && !devToolsOpen)
+        if (IS_DEV && IS_DISCORD_DESKTOP && !devToolsOpen)
             throw err;
 
         return;
@@ -437,7 +438,7 @@ export async function extractAndLoadChunks(code: string[], matcher: RegExp = /\.
         logger.warn(err, "Code:", code, "Matcher:", matcher);
 
         // Strict behaviour in DevBuilds to fail early and make sure the issue is found
-        if (IS_DEV && !devToolsOpen)
+        if (IS_DEV && IS_DISCORD_DESKTOP && !devToolsOpen)
             throw err;
 
         return;
@@ -455,7 +456,7 @@ export async function extractAndLoadChunks(code: string[], matcher: RegExp = /\.
  * @param matcher A RegExp that returns the entry point id as the first capture group. Defaults to a matcher that captures the first entry point found in the module factory
  * @returns A function that loads the chunks on first call
  */
-export function extractAndLoadChunksLazy(code: string[], matcher: RegExp = /\.el\("(.+?)"\)(?<=(\i)\.el.+?)\.then\(\2\.bind\(\2,"\1"\)\)/) {
+export function extractAndLoadChunksLazy(code: string[], matcher: RegExp = /\.el\(".+?"\)(?<=(\i)\.el.+?)\.then\(\1\.bind\(\1,"(.+?)"\)\)/) {
     if (IS_DEV) lazyWebpackSearchHistory.push(["extractAndLoadChunks", [code, matcher]]);
 
     return () => extractAndLoadChunks(code, matcher);
@@ -479,14 +480,6 @@ export function waitFor(filter: string | string[] | FilterFn, callback: Callback
     if (existing) return void callback(existing, id);
 
     subscriptions.set(filter, callback);
-}
-
-export function addListener(callback: CallbackFn) {
-    listeners.add(callback);
-}
-
-export function removeListener(callback: CallbackFn) {
-    listeners.delete(callback);
 }
 
 /**
