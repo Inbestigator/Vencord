@@ -383,9 +383,11 @@ function runTime(token: string) {
                 loadLazyChunks(factory.toString());
             });
 
-            for (const factoryId in Vencord.Webpack.wreq.m) {
-                loadLazyChunks(Vencord.Webpack.wreq.m[factoryId].toString());
-            }
+            setImmediate(() => {
+                for (const factoryId in Vencord.Webpack.wreq.m) {
+                    loadLazyChunks(Vencord.Webpack.wreq.m[factoryId].toString());
+                }
+            });
         });
 
         // Force load all chunks
