@@ -9,14 +9,9 @@ import { Notifications } from "@api/index";
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import { getCurrentChannel } from "@utils/discord";
-import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
 import { ChannelStore, Menu, MessageStore, NavigationRouter, PresenceStore, PrivateChannelsStore, UserStore, WindowStore } from "@webpack/common";
-import type { Message, User as DiscordUser } from "discord-types/general";
-
-interface User extends DiscordUser {
-    globalName: string;
-}
+import { type Message } from "discord-types/general";
 
 interface IMessageCreate {
     channelId: string;
@@ -24,7 +19,7 @@ interface IMessageCreate {
     message: Message;
 }
 
-function Icon(enabled?: boolean): JSX.Element {
+function icon(enabled?: boolean): JSX.Element {
     return <svg
         width="18"
         height="18"
@@ -38,41 +33,62 @@ function processIds(value: string): string {
     return value.replace(/\s/g, "").split(",").filter(id => id.trim() !== "").join(", ");
 }
 
-async function showNotification(message: Message, guildId: string | undefined): Promise<void> {
+async function showNotification(message, guildId) {
     const channel = ChannelStore.getChannel(message.channel_id);
     const channelRegex = /<#(\d{19})>/g;
     const userRegex = /<@(\d{18})>/g;
 
-    message.content = message.content.replace(channelRegex, (match, channelId: string) => {
+    message.content = message.content.replace(channelRegex, (match, channelId) => {
         return `#${ChannelStore.getChannel(channelId)?.name}`;
     });
 
-    message.content = message.content.replace(userRegex, (match, userId: string) => {
-        return `@${(UserStore.getUser(userId) as User).globalName}`;
+    message.content = message.content.replace(userRegex, (match, userId) => {
+        return `@${UserStore.getUser(userId)?.globalName}`;
     });
 
-    await Notifications.showNotification({
-        title: `${(message.author as User).globalName} ${guildId ? `(#${channel?.name}, ${ChannelStore.getChannel(channel?.parent_id)?.name})` : ""}`,
-        body: message.content,
-        icon: UserStore.getUser(message.author.id).getAvatarURL(undefined, undefined, false),
-        onClick: function (): void {
-            NavigationRouter.transitionTo(`/channels/${guildId ?? "@me"}/${message.channel_id}/${message.id}`);
+    if (settings.store.notificationsOn) {
+        try {
+            await Notifications.showNotification({
+                title: `${message.author.globalName} ${guildId ? `(#${channel?.name}, ${ChannelStore.getChannel(channel?.parent_id)?.name})` : ""}`,
+                body: message.content,
+                icon: UserStore.getUser(message.author.id).getAvatarURL(undefined, undefined, false),
+                onClick: function () {
+                    NavigationRouter.transitionTo(`/channels/${guildId ?? "@me"}/${message.channel_id}/${message.id}`);
+                }
+            });
+        } catch (error) {
+            console.error('Error showing notification:', error);
         }
-    });
+    }
+
+    if (settings.store.soundOn) {
+        // Play notification sound only if soundOn setting is true
+        const audio = new Audio('https://discord.com/assets/9422aef94aa931248105.mp3');
+        audio.addEventListener('error', function (event) {
+            console.error('Error playing notification sound:', event);
+        });
+        audio.play();
+    }
 }
 
 function ContextCallback(name: "guild" | "user" | "channel"): NavContextMenuPatchCallback {
     return (children, props) => {
         const type = props[name];
         if (!type) return;
+
+        const isUser = name === "user";
+        const showNotificationsOption = !isUser;
+        const showSoundOption = !isUser;
+
         const enabled = settings.store[`${name}s`].split(", ").includes(type.id);
-        if (name === "user" && type.id === UserStore.getCurrentUser().id) return;
+        if (isUser && type.id === UserStore.getCurrentUser().id) return;
+        
         children.splice(-1, 0, (
             <Menu.MenuGroup>
                 <Menu.MenuItem
                     id={`dnd-${name}-bypass`}
                     label={`${enabled ? "Remove" : "Add"} DND Bypass`}
-                    icon={() => Icon(enabled)}
+                    icon={() => icon(enabled)}
                     action={() => {
                         let bypasses: string[] = settings.store[`${name}s`].split(", ");
                         if (enabled) bypasses = bypasses.filter(id => id !== type.id);
@@ -80,6 +96,26 @@ function ContextCallback(name: "guild" | "user" | "channel"): NavContextMenuPatc
                         settings.store[`${name}s`] = bypasses.filter(id => id.trim() !== "").join(", ");
                     }}
                 />
+                {showNotificationsOption && (
+                    <Menu.MenuItem
+                        id={`dnd-${name}-notifications-on`}
+                        label="Turn on notifications"
+                        icon={() => icon(true)}
+                        action={() => {
+                            settings.store.notificationsOn = true; // Set notifications on
+                        }}
+                    />
+                )}
+                {showSoundOption && (
+                    <Menu.MenuItem
+                        id={`dnd-${name}-sound-on`}
+                        label="Turn on sound"
+                        icon={() => icon(true)}
+                        action={() => {
+                            settings.store.soundOn = true; // Set sound on
+                        }}
+                    />
+                )}
             </Menu.MenuGroup>
         ));
     };
@@ -110,13 +146,30 @@ const settings = definePluginSettings({
     allowOutsideOfDms: {
         type: OptionType.BOOLEAN,
         description: "Allow selected users to bypass DND outside of DMs too (acts like a channel/guild bypass, but it's for all messages sent by the selected users)"
+    },
+    notificationsOn: {
+        type: OptionType.BOOLEAN,
+        description: "Turn on notifications",
+        default: false,
+    },
+    soundOn: {
+        type: OptionType.BOOLEAN,
+        description: "Turn on sound",
+        default: false,
     }
 });
+
 
 export default definePlugin({
     name: "BypassDND",
     description: "Still get notifications from specific sources when in do not disturb mode. Right-click on users/channels/guilds to set them to bypass do not disturb mode.",
-    authors: [Devs.Inbestigator],
+    authors: [
+        {
+            id: 712781121162838016n,
+            name: "Drakz_z",
+        },
+        Devs.Inbestigator
+    ],
     flux: {
         async MESSAGE_CREATE({ message, guildId, channelId }: IMessageCreate): Promise<void> {
             try {
@@ -136,7 +189,7 @@ export default definePlugin({
                     }
                 }
             } catch (error) {
-                new Logger("BypassDND").error("Failed to handle message", error);
+                console.error(error);
             }
         }
     },
