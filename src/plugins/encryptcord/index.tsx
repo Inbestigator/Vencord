@@ -16,7 +16,6 @@ import { removeButton } from "@api/MessagePopover";
 import { Devs } from "@utils/constants";
 import { sleep } from "@utils/misc";
 import definePlugin from "@utils/types";
-import { findByPropsLazy } from "@webpack";
 import {
     FluxDispatcher, MessageActions,
     PrivateChannelsStore, RestAPI,
@@ -25,16 +24,15 @@ import {
     UserUtils, useState,
 } from "@webpack/common";
 import { Message } from "discord-types/general";
+const CloudUpload = findLazy(m => m.prototype?.trackUploadFinished);
 
 import { decryptData, encryptData, formatPemKey, generateKeys } from "./rsa-utils";
-const MessageCreator = findByPropsLazy("createBotMessage");
-const CloudUtils = findByPropsLazy("CloudUpload");
 import { getCurrentChannel } from "@utils/discord";
+import { findLazy } from "@webpack";
 
 let enabled;
 let setEnabled;
 
-// Interface for Message Create
 interface IMessageCreate {
     type: "MESSAGE_CREATE";
     optimistic: boolean;
@@ -43,7 +41,6 @@ interface IMessageCreate {
     message: Message;
 }
 
-// Chat Bar Icon Component
 const ChatBarIcon: ChatBarButton = ({ isMainChat }) => {
     [enabled, setEnabled] = useState(false);
     const [buttonDisabled, setButtonDisabled] = useState(false);
@@ -132,7 +129,6 @@ const ChatBarIcon: ChatBarButton = ({ isMainChat }) => {
     );
 };
 
-// Export Plugin
 export default definePlugin({
     name: "Encryptcord",
     description: "End-to-end encryption in Discord!",
@@ -140,14 +136,14 @@ export default definePlugin({
     dependencies: ["CommandsAPI"],
     patches: [
         {
-            find: "executeMessageComponentInteraction:",
+            find: "INTERACTION_APPLICATION_COMMAND_INVALID_VERSION",
             replacement: {
-                match: /await\s+l\.default\.post\({\s*url:\s*A\.Endpoints\.INTERACTIONS,\s*body:\s*C,\s*timeout:\s*3e3\s*},\s*t\s*=>\s*{\s*h\(T,\s*p,\s*f,\s*t\)\s*}\s*\)/,
-                replace: "await $self.joinGroup(C);$&"
+                match: /await\s.{1,2}\..{1,2}\.post\(\{url:.{1,2}\.ANM\.INTERACTIONS,body:(.),/g,
+                replace: "await $self.interactionHandler($1);$&"
             }
         }
     ],
-    async joinGroup(interaction) {
+    async interactionHandler(interaction) {
         const sender = await UserUtils.getUser(interaction.application_id).catch(() => null);
         if (!sender || (sender.bot === true && sender.id !== "1")) return;
         if (interaction.data.component_type !== 2) return;
@@ -239,7 +235,7 @@ export default definePlugin({
                     type: ApplicationCommandOptionType.SUB_COMMAND,
                 },
             ],
-            inputType: ApplicationCommandInputType.BOT,
+            inputType: ApplicationCommandInputType.BUILT_IN,
             execute: (opts, ctx) => {
                 switch (opts[0].name) {
                     case "start":
@@ -280,7 +276,7 @@ async function sendTempMessage(recipientId: string, attachment: string, content:
     if (recipientId === UserStore.getCurrentUser().id) return;
     const channelId = dm ? await PrivateChannelsStore.getOrEnsurePrivateChannel(recipientId) : recipientId;
     if (attachment && attachment !== "") {
-        const upload = await new CloudUtils.CloudUpload({
+        const upload = await new CloudUpload({
             file: new File([new Blob([attachment])], "file.text", { type: "text/plain; charset=utf-8" }),
             isClip: false,
             isThumbnail: false,
@@ -400,7 +396,7 @@ async function handleJoin(senderId: string, senderKey: string, encryptcordGroupM
 
 // Create message for group
 async function createMessage(message: string, senderId: string, channelId: string, type: number) {
-    const messageStart = MessageCreator.createBotMessage({ channelId, content: "", embeds: [] });
+    const messageStart = sendBotMessage("", { channel_id: channelId, embeds: [] });
     const sender = await UserUtils.getUser(senderId).catch(() => null);
     if (!sender) return;
     return { ...messageStart, content: message, author: sender, type, flags: 0 };
