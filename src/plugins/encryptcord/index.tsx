@@ -183,6 +183,7 @@ export default definePlugin({
                     case "join":
                         if (encryptcordGroupMembers[UserStore.getCurrentUser().id].child) return;
                         if (!await DataStore.get("encryptcordGroup")) return;
+                        if (await DataStore.get("encryptcordChannelId") !== message.channel_id) return;
                         const sender = await UserUtils.getUser(message.author.id).catch(() => null);
                         if (!sender) return;
                         const userKey = message.content.split("```")[1];
